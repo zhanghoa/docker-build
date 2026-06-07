@@ -1,30 +1,52 @@
-FROM python:3.10-slim
+# 使用极致精简的 Bookworm Slim 基础镜像
+FROM node:20-bookworm-slim
 
-# 禁用缓冲区，方便查看日志
-ENV PYTHONUNBUFFERED=1
-# 关键：禁用浏览器沙箱（Docker 容器内必须）
+ENV NODE_ENV=production
 ENV PLAYWRIGHT_SKIP_BROWSER_SANDBOX=1
 
-# 安装 Camoufox 运行所需的系统依赖（解决 libgtk-3.so.0 等错误）
+# 【瘦身核心 1】将更新、安装、清理压缩在同一个 RUN 指令中
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
-    xauth \ 
+    xauth \
     libgtk-3-0 \
     libnss3 \
     libx11-xcb1 \
     libasound2 \
+    libdbus-glib-1-2 \
+    libgbm1 \
+    fonts-liberation \
+    unzip \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /var/cache/*
 
-# 安装 Camoufox Python 包（它会自动安装 playwright-core 等）
-RUN pip install --no-cache-dir camoufox
+WORKDIR /app
 
-# 关键步骤：在镜像构建期间下载 Camoufox 浏览器（固化到镜像层，避免运行时下载失败）
-# 这一步会自动识别宿主架构（arm64），下载正确的浏览器二进制
-RUN python -m camoufox fetch
+# 【瘦身核心 2】仅安装 Node.js 生产依赖
+COPY package*.json ./
+RUN npm ci --omit=dev \
+    && npm cache clean --force
 
-# 暴露服务端口（camoufox run 默认使用 9377）
+# 通过 Buildkit 外部挂载解压内核
+ARG ARCH=aarch64
+RUN --mount=type=bind,source=dist,target=/dist \
+    mkdir -p /root/.cache/camoufox \
+    && (unzip -q /dist/camoufox-${ARCH}.zip -d /root/.cache/camoufox || true) \
+    && chmod -R 755 /root/.cache/camoufox \
+    # ==============================================================
+    # 【Bug 免疫补丁】拦截 Node.js 的错误环境变量，强行注入正确的 DISPLAY
+    # ==============================================================
+    && mv /root/.cache/camoufox/camoufox-bin /root/.cache/camoufox/camoufox-bin-real \
+    && echo '#!/bin/sh' > /root/.cache/camoufox/camoufox-bin \
+    && echo 'export DISPLAY=:99' >> /root/.cache/camoufox/camoufox-bin \
+    && echo 'exec /root/.cache/camoufox/camoufox-bin-real "$@"' >> /root/.cache/camoufox/camoufox-bin \
+    && chmod +x /root/.cache/camoufox/camoufox-bin
+
+# 拷贝剩余的服务端源码
+COPY . .
+
 EXPOSE 9377
 
-# 启动命令：使用 xvfb 创建虚拟显示器，运行 camoufox 服务
-CMD ["sh", "-c", "xvfb-run --auto-servernum python -m camoufox run --port ${CAMOFOX_PORT:-9377} --host ${CAMOFOX_HOST:-0.0.0.0}"]
+# ==============================================================
+# 【启动命令修正】在后台启动一个干净的虚拟显示器，避开 Node 程序的残缺逻辑
+# ==============================================================
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp & sleep 1 && npm start"]
