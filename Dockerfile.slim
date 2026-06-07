@@ -23,7 +23,8 @@ WORKDIR /app
 
 # 【瘦身核心 2】仅安装 Node.js 生产依赖
 COPY package*.json ./
-RUN npm ci --omit=dev \
+# 加入 --ignore-scripts 屏蔽官方的自动下载钩子，避免 QEMU 下崩溃
+RUN npm ci --omit=dev --ignore-scripts \
     && npm cache clean --force
 
 # 通过 Buildkit 外部挂载解压内核
