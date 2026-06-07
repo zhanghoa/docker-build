@@ -1,4 +1,4 @@
-name: Build and Push Camoufox (ARM64 for RK3566)
+name: Build jo-inc Camofox API Server for ARM64
 
 on:
   push:
@@ -7,45 +7,49 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # 镜像名称为：ghcr.io/你的用户名/你的仓库名:latest
   IMAGE_NAME: ${{ github.repository }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build-and-push:
+  build-arm64:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
     steps:
-      - name: Checkout code
+      # 直接克隆 jo-inc 官方仓库代码
+      - name: Checkout official repository
         uses: actions/checkout@v4
+        with:
+          repository: jo-inc/camofox-browser
+          ref: master
 
-      # 设置 QEMU 模拟（用于在 x86 runner 上构建 ARM64 镜像）
+      # 【核心步骤】：在宿主机（x86）上执行官方的下载脚本，获取 ARM64 的二进制内核包放到 dist/ 目录下
+      - name: Fetch Camoufox binaries for ARM64
+        run: make fetch ARCH=aarch64
+
+      # 注册 QEMU 跨架构引擎
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 设置 Docker Buildx（多架构支持）
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 登录 GitHub Container Registry
-      - name: Log in to GHCR
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 构建并推送 ARM64 镜像（专门为 RK3566 优化）
+      # 官方的 Dockerfile 里面写了 --mount=type=bind,source=dist，所以它会自动读取刚才下载的文件
       - name: Build and push ARM64 image
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/arm64   # 只构建 ARM64，加快速度并减小体积
+          platforms: linux/arm64
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false        # 可选：减小元数据
-          sbom: false
