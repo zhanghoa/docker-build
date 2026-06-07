@@ -1,4 +1,4 @@
-name: Build Official Camofox for ARM64
+name: Build Official Camofox for ARM64 (Slim & Patched)
 
 on:
   push:
@@ -7,9 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # 自动获取你的 账号名/仓库名，转换为小写格式以符合 Docker 规范
   IMAGE_NAME: ${{ github.repository }}
-  # 强制所有 Action 节点使用 Node.js 24 运行，彻底消除弃用警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -20,27 +18,39 @@ jobs:
       packages: write
 
     steps:
-      # 1. 克隆 jo-inc 官方的 camofox-browser 仓库源码
+      # 1. 检出你自己的仓库（为了拿到你刚创建的 Dockerfile.slim）
+      - name: Checkout your repository
+        uses: actions/checkout@v4
+        with:
+          path: my-repo
+
+      # 2. 检出 jo-inc 官方源码（放进名为 camofox-src 的文件夹中）
       - name: Checkout official camofox-browser repository
         uses: actions/checkout@v4
         with:
           repository: jo-inc/camofox-browser
           ref: master
+          path: camofox-src
 
-      # 2. 在宿主机上提前下载好 aarch64 的浏览器内核压缩包（放入 dist/ 目录）
-      # 这能完美绕过 QEMU 跨架构模拟器下执行大文件下载和解压时的各种诡异死锁
+      # 3. 【核心替换】把你的免疫补丁 Dockerfile 覆盖掉官方原本残缺的配置
+      - name: Replace official Dockerfile with slim patch
+        run: |
+          cp my-repo/Dockerfile.slim camofox-src/Dockerfile
+
+      # 4. 在官方源码目录中，下载 aarch64 的浏览器内核压缩包
       - name: Fetch Camoufox binaries (ARM64)
+        working-directory: ./camofox-src
         run: make fetch ARCH=aarch64
 
-      # 3. 注册 QEMU 跨架构引擎，允许 x86 服务器构建 ARM64 镜像
+      # 5. 注册 QEMU 跨架构引擎
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 4. 配置 Docker Buildx 编译工具
+      # 6. 配置 Docker Buildx 编译工具
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 5. 登录到 GitHub 容器镜像库
+      # 7. 登录到 GitHub 容器镜像库
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -48,12 +58,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 6. 执行编译并推送。通过 build-args 显式告诉 Dockerfile 去解压 aarch64 的包
+      # 8. 执行最终编译并推送（注意这里的上下文 context 已经改成了 camofox-src）
       - name: Build and push ARM64 image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./camofox-src
+          file: ./camofox-src/Dockerfile
           platforms: linux/arm64
           build-args: |
             ARCH=aarch64
