@@ -8,6 +8,7 @@ ENV PLAYWRIGHT_SKIP_BROWSER_SANDBOX=1
 # 安装 Camoufox 运行所需的系统依赖（解决 libgtk-3.so.0 等错误）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
+    xauth \ 
     libgtk-3-0 \
     libnss3 \
     libx11-xcb1 \
