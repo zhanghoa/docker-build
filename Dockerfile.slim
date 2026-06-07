@@ -29,6 +29,7 @@ RUN npm ci --omit=dev --ignore-scripts \
 
 # 通过 Buildkit 外部挂载解压内核
 ARG ARCH=aarch64
+ARG CAMOUFOX_VERSION=1.0.0
 RUN --mount=type=bind,source=dist,target=/dist \
     mkdir -p /root/.cache/camoufox \
     && (unzip -q /dist/camoufox-${ARCH}.zip -d /root/.cache/camoufox || true) \
