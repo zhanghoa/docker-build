@@ -1,4 +1,4 @@
-name: Build jo-inc Camofox API Server for ARM64
+name: Build Official Camofox for ARM64
 
 on:
   push:
@@ -7,7 +7,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # 自动获取你的 账号名/仓库名，转换为小写格式以符合 Docker 规范
   IMAGE_NAME: ${{ github.repository }}
+  # 强制所有 Action 节点使用 Node.js 24 运行，彻底消除弃用警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -18,24 +20,27 @@ jobs:
       packages: write
 
     steps:
-      # 直接克隆 jo-inc 官方仓库代码
-      - name: Checkout official repository
+      # 1. 克隆 jo-inc 官方的 camofox-browser 仓库源码
+      - name: Checkout official camofox-browser repository
         uses: actions/checkout@v4
         with:
           repository: jo-inc/camofox-browser
           ref: master
 
-      # 【核心步骤】：在宿主机（x86）上执行官方的下载脚本，获取 ARM64 的二进制内核包放到 dist/ 目录下
-      - name: Fetch Camoufox binaries for ARM64
+      # 2. 在宿主机上提前下载好 aarch64 的浏览器内核压缩包（放入 dist/ 目录）
+      # 这能完美绕过 QEMU 跨架构模拟器下执行大文件下载和解压时的各种诡异死锁
+      - name: Fetch Camoufox binaries (ARM64)
         run: make fetch ARCH=aarch64
 
-      # 注册 QEMU 跨架构引擎
+      # 3. 注册 QEMU 跨架构引擎，允许 x86 服务器构建 ARM64 镜像
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
+      # 4. 配置 Docker Buildx 编译工具
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # 5. 登录到 GitHub 容器镜像库
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -43,13 +48,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 官方的 Dockerfile 里面写了 --mount=type=bind,source=dist，所以它会自动读取刚才下载的文件
+      # 6. 执行编译并推送。通过 build-args 显式告诉 Dockerfile 去解压 aarch64 的包
       - name: Build and push ARM64 image
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Dockerfile
           platforms: linux/arm64
+          build-args: |
+            ARCH=aarch64
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
