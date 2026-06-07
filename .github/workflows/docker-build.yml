@@ -1,75 +1,55 @@
-name: Build Official Camofox for ARM64 (Slim & Patched)
+name: Build Camofox for ARM64
 
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-arm64:
+  build:
+    # 💡 换回普通服务器，3秒钟内绝对接单，不再排队！
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
-      # 1. 检出你自己的仓库（为了拿到你刚创建的 Dockerfile.slim）
-      - name: Checkout your repository
+      - name: Checkout custom repository
         uses: actions/checkout@v4
-        with:
-          path: my-repo
 
-      # 2. 检出 jo-inc 官方源码（放进名为 camofox-src 的文件夹中）
-      - name: Checkout official camofox-browser repository
-        uses: actions/checkout@v4
-        with:
-          repository: jo-inc/camofox-browser
-          ref: master
-          path: camofox-src
-
-      # 3. 【核心替换】把你的免疫补丁 Dockerfile 覆盖掉官方原本残缺的配置
-      - name: Replace official Dockerfile with slim patch
+      - name: Fetch and Isolate Camoufox binaries
         run: |
-          cp my-repo/Dockerfile.slim camofox-src/Dockerfile
+          git clone https://github.com/jo-inc/camoufox-browser camofox-src
+          cd camofox-src && make fetch ARCH=aarch64 && cd ..
+          mkdir -p dist
+          find . -name "*.zip" -exec cp {} dist/ \;
+          echo "Verified assets in current build context:"
+          ls -lh dist/
 
-      # 4. 在官方源码目录中，下载 aarch64 的浏览器内核压缩包
-      - name: Fetch Camoufox binaries (ARM64)
-        working-directory: ./camofox-src
-        run: make fetch ARCH=aarch64
-
-      # 5. 注册 QEMU 跨架构引擎
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      # 6. 配置 Docker Buildx 编译工具
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # 7. 登录到 GitHub 容器镜像库
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 8. 执行最终编译并推送（注意这里的上下文 context 已经改成了 camofox-src）
-      - name: Build and push ARM64 image
+      # 💡 请回 QEMU，用于跨架构打包环境（但不负责硬编译，所以不会崩溃）
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Execute Industrial Docker Build
         uses: docker/build-push-action@v6
         with:
-          context: ./camofox-src
-          file: ./camofox-src/Dockerfile
+          context: .
+          file: ./Dockerfile
           platforms: linux/arm64
-          build-args: |
-            ARCH=aarch64
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          tags: ghcr.io/${{ github.repository }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false
-          sbom: false
